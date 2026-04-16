@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   sqlserver:
     image: mcr.microsoft.com/mssql/server:2022-latest
@@ -24,6 +22,9 @@ services:
       - "6379:6379"
 
   userservice:
+    environment:
+    - ASPNETCORE_URLS=http://+:8080
+    - ConnectionStrings__UserDb=Server=sqlserver;Database=FundooUsersDb;User Id=sa;Password=YourStrong@Pass123;TrustServerCertificate=True;
     build:
       context: .
       dockerfile: src/Services/UserService/Fundoo.UserService.API/Dockerfile
@@ -34,6 +35,8 @@ services:
       - rabbitmq
 
   notesservice:
+    environment:
+    - ASPNETCORE_URLS=http://+:8080
     build:
       context: .
       dockerfile: src/Services/NotesService/Fundoo.NotesService.API/Dockerfile
