@@ -1,7 +1,6 @@
 services:
   sqlserver:
     image: mcr.microsoft.com/mssql/server:2022-latest
-    container_name: fundoo-sqlserver
     environment:
       - ACCEPT_EULA=Y
       - SA_PASSWORD=YourStrong@Pass123
@@ -10,14 +9,12 @@ services:
 
   rabbitmq:
     image: rabbitmq:3-management
-    container_name: fundoo-rabbitmq
     ports:
       - "5672:5672"
       - "15672:15672"
 
   redis:
     image: redis:7-alpine
-    container_name: fundoo-redis
     ports:
       - "6379:6379"
 
@@ -37,6 +34,7 @@ services:
   notesservice:
     environment:
     - ASPNETCORE_URLS=http://+:8080
+    - ConnectionStrings__UserDb=Server=sqlserver;Database=FundooNoteDb;User Id=sa;Password=YourStrong@Pass123;TrustServerCertificate=True;
     build:
       context: .
       dockerfile: src/Services/NotesService/Fundoo.NotesService.API/Dockerfile
@@ -47,6 +45,39 @@ services:
       - redis
       - rabbitmq
 
+  labelservice:
+    environment:
+    - ASPNETCORE_URLS=http://+:8080
+    - ConnectionStrings__UserDb=Server=sqlserver;Database=FundooLabelDb;User Id=sa;Password=YourStrong@Pass123;TrustServerCertificate=True;
+    build:
+      context: .
+      dockerfile: src/Services/LabelService/Fundoo.LabelService.API/Dockerfile
+    ports:
+      - "5003:8080"
+    depends_on:
+      - sqlserver
+
+  reminderservice:
+    environment:
+    - ASPNETCORE_URLS=http://+:8080
+    - ConnectionStrings__UserDb=Server=sqlserver;Database=FundooReminderDb;User Id=sa;Password=YourStrong@Pass123;TrustServerCertificate=True;
+    build:
+      context: .
+      dockerfile: src/Services/ReminderService/Fundoo.ReminderService.API/Dockerfile
+    ports:
+      - "5004:8080"
+    depends_on:
+      - sqlserver
+
+  collaborationservice:
+    build:
+      context: .
+      dockerfile: src/Services/CollaborationService/Fundoo.CollaborationService.API/Dockerfile
+    ports:
+      - "5005:8080"
+    depends_on:
+      - sqlserver
+
   apigateway:
     build:
       context: .
@@ -56,3 +87,6 @@ services:
     depends_on:
       - userservice
       - notesservice
+      - labelservice
+      - reminderservice
+      - collaborationservice

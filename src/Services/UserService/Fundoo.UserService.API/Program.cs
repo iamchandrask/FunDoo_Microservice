@@ -134,6 +134,8 @@ var app = builder.Build();
 // - Must be early in pipeline to catch all exceptions
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
+//////////////
+app.UseSerilogRequestLogging();
 
 // Enable Swagger only in Development environment
 if (app.Environment.IsDevelopment())
