@@ -1,4 +1,5 @@
-﻿using Fundoo.UserService.Application.DTOs;
+﻿using FluentValidation;
+using Fundoo.UserService.Application.DTOs;
 using Fundoo.UserService.Application.Features.Users.Commands.ForgotPassword;
 using Fundoo.UserService.Application.Features.Users.Commands.Register;
 using Fundoo.UserService.Application.Features.Users.Commands.RegisterUser;
@@ -32,12 +33,15 @@ public class AuthController : ControllerBase
 
     private readonly IMediator _mediator;
 
+    private readonly IValidator<RegisterUserRequest> _registerValidator;
+
     // Constructor Injection:
     // - IMediator is injected via Dependency Injection
     // - Controller does not depend on services directly
-    public AuthController(IMediator mediator)
+    public AuthController(IMediator mediator, IValidator<RegisterUserRequest> registerValidator)
     {
         _mediator = mediator;
+        _registerValidator = registerValidator;
     }
 
     // ========================= REGISTER =========================
@@ -49,6 +53,21 @@ public class AuthController : ControllerBase
     [HttpPost("register")]
     public async Task<IActionResult> Register([FromBody] RegisterUserRequest request)
     {
+
+        var validationResult = await _registerValidator.ValidateAsync(request);
+
+        if (!validationResult.IsValid)
+        {
+            return BadRequest(new
+            {
+                Message = "Validation failed",
+                Errors = validationResult.Errors.Select(e => new
+                {
+                    e.PropertyName,
+                    e.ErrorMessage
+                })
+            });
+        }
         // 🔹 [FromBody]:
         // - Binds incoming JSON request to RegisterUserRequest DTO
 

@@ -1,44 +1,68 @@
+using Fundoo.ReminderService.Application.Contracts;
+using Fundoo.ReminderService.Application.Features.Reminders.Commands.AddReminder;
+using Fundoo.ReminderService.Infrastructure.Persistence;
+using Fundoo.ReminderService.Infrastructure.Repositories;
+using MediatR;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
+var configuration = builder.Configuration;
+
+
+
+// Register DbContext with SQL Server
+builder.Services.AddDbContext<ReminderDbContext>(options =>
+    options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
+
+// Register repository for DI
+// This allows MediatR handlers to use ICollaboratorRepository abstraction
+builder.Services.AddScoped<IReminderRepository, ReminderRepository>();
+
+
+
+// Register MediatR and scan Application assembly for handlers
+builder.Services.AddMediatR(cfg =>
+    cfg.RegisterServicesFromAssembly(typeof(
+        AddReminderCommand
+    ).Assembly));
+
+builder.Services.AddControllers();
+
+// Swagger is useful for testing APIs independently
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+#region ?? Middleware Pipeline
 
-app.UseHttpsRedirection();
+// Enable Swagger (IMPORTANT: enable always for Docker debugging)
+app.UseSwagger();
+app.UseSwaggerUI();
 
-var summaries = new[]
-{
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
+// Authentication MUST come before Authorization
+app.UseAuthentication();
 
-app.MapGet("/weatherforecast", () =>
-{
-    var forecast =  Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
-    return forecast;
-})
-.WithName("GetWeatherForecast")
-.WithOpenApi();
+// Enforces [Authorize] attribute in controllers
+app.UseAuthorization();
+
+// Map controller routes
+app.MapControllers();
+
+#endregion
+
+#region ?? Database Migration (Optional but useful)
+
+// Auto-apply migrations on startup (optional in dev)
+//using (var scope = app.Services.CreateScope())
+//{
+//    var db = scope.ServiceProvider.GetRequiredService<CollaborationDbContext>();
+//    db.Database.Migrate();
+//}
+
+#endregion
 
 app.Run();
-
-record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}

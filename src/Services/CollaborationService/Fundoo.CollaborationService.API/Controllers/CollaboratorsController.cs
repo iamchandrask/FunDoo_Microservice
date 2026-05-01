@@ -20,8 +20,19 @@ public class CollaboratorsController : ControllerBase
         _mediator = mediator;
     }
 
-    private Guid GetUserId() =>
-        Guid.Parse(User.FindFirst(JwtRegisteredClaimNames.Sub)!.Value);
+    private Guid GetUserId()
+    {
+        var claim = User.FindFirst(JwtRegisteredClaimNames.Sub)
+                    ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier);
+
+        if (claim == null)
+            throw new UnauthorizedAccessException("User ID claim not found in token");
+
+        if (!Guid.TryParse(claim.Value, out var userId))
+            throw new UnauthorizedAccessException("Invalid User ID format");
+
+        return userId;
+    }
 
     [HttpPost]
     public async Task<IActionResult> Add(AddCollaboratorRequest request)

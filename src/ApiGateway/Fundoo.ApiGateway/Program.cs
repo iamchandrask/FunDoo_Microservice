@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using Ocelot.DependencyInjection;
@@ -8,13 +8,13 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Configuration.AddJsonFile("ocelot.json", optional: false, reloadOnChange: true);
 
-var authProviderKey = "Bearer";
+const string AuthProviderKey = "Bearer";
 
 var jwtSection = builder.Configuration.GetSection("JwtSettings");
 
 builder.Services
     .AddAuthentication()
-    .AddJwtBearer(authProviderKey, options =>
+    .AddJwtBearer(AuthProviderKey, options =>
     {
         options.TokenValidationParameters = new TokenValidationParameters
         {
@@ -29,11 +29,19 @@ builder.Services
         };
     });
 
+// 🔥 ADD THIS
+builder.Services.AddAuthorization();
+
 builder.Services.AddOcelot(builder.Configuration);
+builder.Services.AddHealthChecks();
 
 var app = builder.Build();
 
 app.UseAuthentication();
+app.UseAuthorization(); // 🔥 REQUIRED
+
 await app.UseOcelot();
+
+app.MapHealthChecks("/health");
 
 app.Run();

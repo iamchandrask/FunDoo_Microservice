@@ -17,6 +17,8 @@ public class CreateNoteCommandHandler : IRequestHandler<CreateNoteCommand, Guid>
 
     public async Task<Guid> Handle(CreateNoteCommand command, CancellationToken cancellationToken)
     {
+
+        Console.WriteLine(command);
         var note = new Note
         {
             UserId = command.UserId,

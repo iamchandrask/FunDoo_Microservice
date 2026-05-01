@@ -1,6 +1,8 @@
-﻿using System.Text.Json;
+﻿using FluentValidation;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+using System.Net;
+using System.Text.Json;
 
 namespace Shared.Infrastructure.Middleware;
 
@@ -23,6 +25,23 @@ public class ExceptionHandlingMiddleware
         {
             await _next(context);
         }
+        catch (ValidationException ex)
+        {
+            context.Response.ContentType = "application/json";
+            context.Response.StatusCode = (int)HttpStatusCode.BadRequest;
+
+            var errors = ex.Errors.Select(e => new
+            {
+                e.PropertyName,
+                e.ErrorMessage
+            });
+
+            await context.Response.WriteAsync(JsonSerializer.Serialize(new
+            {
+                Message = "Validation failed",
+                Errors = errors
+            }));
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unhandled exception occurred");
@@ -30,19 +49,16 @@ public class ExceptionHandlingMiddleware
             context.Response.ContentType = "application/json";
             context.Response.StatusCode = ex switch
             {
-                UnauthorizedAccessException => StatusCodes.Status401Unauthorized,
-                KeyNotFoundException => StatusCodes.Status404NotFound,
-                InvalidOperationException => StatusCodes.Status400BadRequest,
-                _ => StatusCodes.Status500InternalServerError
+                UnauthorizedAccessException => (int)HttpStatusCode.Unauthorized,
+                KeyNotFoundException => (int)HttpStatusCode.NotFound,
+                InvalidOperationException => (int)HttpStatusCode.BadRequest,
+                _ => (int)HttpStatusCode.InternalServerError
             };
 
-            var response = new
+            await context.Response.WriteAsync(JsonSerializer.Serialize(new
             {
-                StatusCode = context.Response.StatusCode,
                 Message = ex.Message
-            };
-
-            await context.Response.WriteAsync(JsonSerializer.Serialize(response));
+            }));
         }
     }
 }
