@@ -1,121 +1,114 @@
 ﻿using System.Text;
-using Fundoo.UserService.API.Middleware;
-using Fundoo.UserService.Application.Contracts;
-using Fundoo.UserService.Application.Features.Users.Commands.RegisterUser;
-using Fundoo.UserService.Infrastructure.Persistence;
-using Fundoo.UserService.Infrastructure.Repositories;
-using Fundoo.UserService.Infrastructure.Security;
+using FluentValidation;
+using MediatR;
 using MassTransit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Serilog;
 
-// Create builder for configuring services and app pipeline
+using Fundoo.UserService.Application.Contracts;
+using Fundoo.UserService.Application.Features.Users.Commands.RegisterUser;
+using Fundoo.UserService.Application.Validators;
+using Fundoo.UserService.Infrastructure.Persistence;
+using Fundoo.UserService.Infrastructure.Repositories;
+using Fundoo.UserService.Infrastructure.Security;
+
+using Shared.Infrastructure.Behaviors;
+using Shared.Infrastructure.Middleware;
+
 var builder = WebApplication.CreateBuilder(args);
+
 
 // ========================= LOGGING (SERILOG) =========================
 
-// Configure Serilog for structured logging
-// - Logs will be written to console (can be extended to files, Seq, etc.)
 Log.Logger = new LoggerConfiguration()
+    .ReadFrom.Configuration(builder.Configuration)
+    .Enrich.FromLogContext()
+    .Enrich.WithMachineName()
+    .Enrich.WithProcessId()
+    .Enrich.WithThreadId()
     .WriteTo.Console()
     .CreateLogger();
 
-// Replace default logging with Serilog
 builder.Host.UseSerilog();
 
 
 // ========================= CONTROLLERS & SWAGGER =========================
 
-// Add support for Controllers (API endpoints)
 builder.Services.AddControllers();
 
-// Enables API endpoint discovery (used by Swagger)
 builder.Services.AddEndpointsApiExplorer();
-
-// Adds Swagger (API documentation + testing UI)
 builder.Services.AddSwaggerGen();
 
 
-// ========================= DATABASE (EF CORE) =========================
+// ========================= DATABASE =========================
 
-// Register DbContext with SQL Server provider
-// - Connection string is fetched from appsettings.json
+var connectionString = builder.Configuration.GetConnectionString("UserDb")
+    ?? throw new Exception("UserDb connection string is missing");
+
 builder.Services.AddDbContext<UserDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("UserDb")));
+    options.UseSqlServer(connectionString));
 
 
-// ========================= MEDIATR (CQRS) =========================
+// ========================= MEDIATR =========================
 
-// Register MediatR and scan assembly for handlers
-// - Automatically finds CommandHandlers & QueryHandlers
 builder.Services.AddMediatR(cfg =>
     cfg.RegisterServicesFromAssembly(typeof(RegisterUserCommand).Assembly));
 
 
+// ========================= FLUENT VALIDATION =========================
+
+builder.Services.AddValidatorsFromAssemblyContaining<RegisterUserRequestValidator>();
+
+// 🔥 Pipeline Behavior (IMPORTANT)
+builder.Services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
+
+
 // ========================= DEPENDENCY INJECTION =========================
 
-// Register Repository
-// - IUserRepository → UserRepository implementation
 builder.Services.AddScoped<IUserRepository, UserRepository>();
-
-// Register JWT Token Generator
-// - Handles token creation logic
 builder.Services.AddScoped<IJwtTokenGenerator, JwtTokenGenerator>();
 
 
 // ========================= JWT AUTHENTICATION =========================
 
-// Read JWT settings from configuration (appsettings.json)
 var jwtSection = builder.Configuration.GetSection("JwtSettings");
 
-// Configure Authentication using JWT Bearer scheme
+var secret = jwtSection["Secret"]
+    ?? throw new Exception("JWT Secret is missing");
+
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
-        // Token validation rules
         options.TokenValidationParameters = new TokenValidationParameters
         {
-            // Validate issuer (who created the token)
             ValidateIssuer = true,
-
-            // Validate audience (who the token is for)
             ValidateAudience = true,
-
-            // Validate token expiration
             ValidateLifetime = true,
-
-            // Validate signing key (security)
             ValidateIssuerSigningKey = true,
-
-            // Valid issuer from config
             ValidIssuer = jwtSection["Issuer"],
-
-            // Valid audience from config
             ValidAudience = jwtSection["Audience"],
-
-            // Secret key used to sign the token
             IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(jwtSection["Secret"]!))
+                Encoding.UTF8.GetBytes(secret))
         };
     });
 
-// Add Authorization (used with [Authorize] attribute)
 builder.Services.AddAuthorization();
 
 
-// ========================= RABBITMQ (MASSTRANSIT) =========================
+// ========================= MASSTRANSIT (RABBITMQ) =========================
 
-// Configure MassTransit with RabbitMQ
 builder.Services.AddMassTransit(x =>
 {
     x.UsingRabbitMq((context, cfg) =>
     {
-        // Configure RabbitMQ host
-        cfg.Host(builder.Configuration["RabbitMq:Host"], "/", h =>
+        var host = builder.Configuration["RabbitMq:Host"]
+            ?? throw new Exception("RabbitMQ Host missing");
+
+        cfg.Host(host, "/", h =>
         {
-            // Credentials
             h.Username(builder.Configuration["RabbitMq:Username"]!);
             h.Password(builder.Configuration["RabbitMq:Password"]!);
         });
@@ -123,38 +116,74 @@ builder.Services.AddMassTransit(x =>
 });
 
 
-// ========================= BUILD APPLICATION =========================
+// ========================= HEALTH CHECKS =========================
+
+var redisConn = builder.Configuration["Redis:ConnectionString"];
+
+var healthChecks = builder.Services.AddHealthChecks()
+    .AddSqlServer(
+        connectionString,
+        name: "sqlserver",
+        tags: new[] { "db", "sql", "ready" });
+
+if (!string.IsNullOrEmpty(redisConn))
+{
+    healthChecks.AddRedis(
+        redisConn,
+        name: "redis",
+        tags: new[] { "cache", "ready" });
+}
+
+
+// ========================= BUILD =========================
 
 var app = builder.Build();
 
 
-// ========================= MIDDLEWARE PIPELINE =========================
+// ========================= MIDDLEWARE =========================
 
-// Global Exception Handling Middleware
-// - Must be early in pipeline to catch all exceptions
+// Global Exception Handling
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
+// Correlation ID (for tracing)
+app.UseMiddleware<CorrelationIdMiddleware>();
 
-// Enable Swagger only in Development environment
+// Logging
+app.UseSerilogRequestLogging();
+
+// Swagger (Dev only)
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
+// HTTPS (optional but recommended)
+app.UseHttpsRedirection();
 
-// Authentication Middleware
-// - Validates JWT token
+// Auth
 app.UseAuthentication();
-
-// Authorization Middleware
-// - Checks permissions ([Authorize])
 app.UseAuthorization();
 
 
-// Map controller endpoints
+// ========================= HEALTH ENDPOINTS =========================
+
+app.MapHealthChecks("/health/live", new HealthCheckOptions
+{
+    Predicate = _ => false
+});
+
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready")
+});
+
+
+// ========================= ENDPOINTS =========================
+
 app.MapControllers();
 
 
-// Run the application
+// ========================= RUN =========================
+
 app.Run();
